@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autonomous Intersection — LLM Multi-Agent Traffic Control</title>
+<meta name="description" content="20 cars at a 4-way intersection, driven by one batch LLM call per tick using only local sensor telemetry.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='8' y='2' width='8' height='20' rx='3' fill='%2314181d'/%3E%3Ccircle cx='12' cy='7' r='2.2' fill='%23ff5a4e'/%3E%3Ccircle cx='12' cy='12' r='2.2' fill='%23f5b83d'/%3E%3Ccircle cx='12' cy='17' r='2.2' fill='%2337d67a'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="8" y="2" width="8" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="7" r="1.8" fill="var(--red)"/><circle cx="12" cy="12" r="1.8" fill="var(--yellow)"/><circle cx="12" cy="17" r="1.8" fill="var(--green)"/></svg>
+    <div>
+      <div class="title">Autonomous Intersection</div>
+      <div class="sub">20 cars · 1 batch LLM call per tick · local sensors only</div>
+    </div>
+  </div>
+  <div class="modes" role="radiogroup" aria-label="Decision source">
+    <button role="radio" data-mode="replay" aria-checked="true" class="on">Replay recorded LLM run</button>
+    <button role="radio" data-mode="live" aria-checked="false">Live LLM</button>
+    <button role="radio" data-mode="baseline" aria-checked="false">Rule baseline (no LLM)</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="stage">
+    <div class="canvas-wrap">
+      <canvas id="world" aria-label="Top-down view of the intersection with moving cars"></canvas>
+      <div class="banner" id="banner" hidden></div>
+      <div class="waiting" id="waiting" hidden><span class="spin"></span>Waiting for LLM batch… sim clock paused</div>
+    </div>
+    <div class="transport">
+      <button class="btn primary" id="btnPlay">Play</button>
+      <button class="btn" id="btnStep">Step 1 tick</button>
+      <button class="btn" id="btnReset">Reset</button>
+      <div class="speed" role="group" aria-label="Animation speed">
+        <span>Speed</span>
+        <button data-speed="1" class="on">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="chkSensors" checked> Show sensors</label>
+    </div>
+    <p class="hint">Click a car to inspect exactly what its sensors report to the LLM.</p>
+  </section>
+
+  <aside class="side">
+    <div class="hud" id="hud">
+      <div class="h-card big ok" id="hCollisions"><div class="k">Collisions</div><div class="v" id="vCollisions">0</div><div class="d">must stay 0</div></div>
+      <div class="h-card big" id="hLatency"><div class="k">LLM API latency</div><div class="v"><span id="vLatency">—</span><small>ms</small></div><div class="d" id="dLatency">avg — · p95 —</div><svg id="latSpark" class="lat-spark" viewBox="0 0 200 28" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+      <div class="h-card big"><div class="k">Vehicles safely cleared</div><div class="v" id="vCleared">0</div><div class="d" id="dThroughput">— veh/min</div></div>
+      <div class="h-grid">
+        <div><span>Tick</span><b id="vTick">0</b></div>
+        <div><span>Sim time</span><b id="vTime">0.0 s</b></div>
+        <div><span>API calls</span><b id="vCalls">0</b></div>
+        <div><span>Valid JSON (1st try)</span><b id="vValid">—</b></div>
+        <div><span>Red-light runs</span><b id="vRed">0</b></div>
+        <div><span>Signal</span><b id="vSignal">—</b></div>
+      </div>
+      <div class="model-line" id="modelLine">Source: recorded run</div>
+    </div>
+
+    <div class="panel" id="livePanel" hidden>
+      <h3>Live LLM settings</h3>
+      <p class="note">Your key stays in this tab's memory and is sent only to the provider you pick. Exactly one request per tick (plus one repair request if the JSON is invalid).</p>
+      <label>Provider
+        <select id="selProvider"></select>
+      </label>
+      <label>Base URL <input id="inBase" spellcheck="false"></label>
+      <label>Model <input id="inModel" spellcheck="false"></label>
+      <label>API key <input id="inKey" type="password" autocomplete="off" placeholder="sk-… / gsk_…"></label>
+      <label>Auto-pause after <input id="inMaxTicks" type="number" min="10" value="200"> ticks</label>
+      <label class="chk"><input type="checkbox" id="chkJson" checked> Request JSON mode (response_format)</label>
+    </div>
+
+    <div class="panel inspector">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="car" class="on">Selected car</button>
+        <button role="tab" data-tab="prompt">Batch prompt</button>
+        <button role="tab" data-tab="resp">LLM response</button>
+        <button role="tab" data-tab="log">Events</button>
+      </div>
+      <div class="tab-body" id="tabBody"></div>
+    </div>
+  </aside>
+</main>
+
+<script src="sim.js"></script>
+<script src="llm.js"></script>
+<script src="replay.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
